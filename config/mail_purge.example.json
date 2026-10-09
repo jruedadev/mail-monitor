@@ -1,0 +1,22 @@
+{
+  "_readme": "Ejemplo de plan de purga. Copia a $HERMES_HOME/rules/mail_purge.json. La purga NO borra: MUEVE los mensajes a la papelera del proveedor, que el usuario puede auditar y recuperar. El script nunca hace EXPUNGE.",
+  "_fields": {
+    "trash_folder": "Nombre EXACTO de la papelera en el servidor. En Gmail con la cuenta en español es '[Gmail]/Papelera'; en inglés, '[Gmail]/Trash'. Verifícalo con mail_inventory.py.",
+    "before": "Año límite EXCLUSIVO: before=2024 mueve lo ANTERIOR a 2024 (no incluye 2024). 'before: null' mueve la carpeta entera."
+  },
+  "_safety": [
+    "mail_purge.py simula por defecto: sin --apply no toca nada.",
+    "Empieza siempre por lo que ya está leído y es antiguo; deja la antigüedad en null solo para carpetas que sean publicidad pura.",
+    "Revisa el simulacro: compara el número que reporta con el que da mail_inventory.py para esa carpeta. Si no coinciden, hay un bug; no apliques."
+  ],
+  "trash_folder": "[Gmail]/Papelera",
+  "plans": {
+    "ejemplo-publicidad": {
+      "why": "Publicidad en carpetas dedicadas, ya leída y antigua. Sin valor documental.",
+      "folders": [
+        { "path": "Promociones/TiendaFavorita" },
+        { "path": "Newsletter/Dev", "before": 2024 }
+      ]
+    }
+  }
+}

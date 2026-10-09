@@ -1,0 +1,37 @@
+{
+  "_readme": "Ejemplo de reglas de agrupación. Copia a $HERMES_HOME/rules/mail_rules.json. Las reglas son POR CUENTA: cada bloque 'profiles' declara qué cuentas cubre y de qué carpeta lee; las reglas de un perfil NO se aplican a las cuentas de otro perfil.",
+  "_how_matching_works": [
+    "Dentro de un perfil las reglas se evalúan EN ORDEN y gana la primera que coincide. Pon las específicas antes que las genéricas.",
+    "'match.domain' busca la cadena en la cabecera From con SEARCH FROM del servidor, así que vale un dominio ('banco.com') o una dirección completa ('alertas@banco.com').",
+    "'to' es la carpeta destino. Se escribe LEGIBLE, con acentos si los tiene: el script la traduce a IMAP modified UTF-7 al hablar con el servidor.",
+    "'create: true' crea la carpeta destino si no existe. Sin esa marca, una regla cuyo destino no exista se omite con un aviso (nunca se crea nada por sorpresa)."
+  ],
+  "_important": [
+    "Verifica los nombres de carpeta con mail_inventory.py antes de escribirlos: deben coincidir con los del servidor.",
+    "No pongas reglas para dominios de personas (gmail.com, outlook.com...): ese correo debe quedarse en el INBOX.",
+    "Añadir una regla NO borra ni mueve nada por sí solo: hay que ejecutar mail_organize.py, que simula por defecto."
+  ],
+  "profiles": [
+    {
+      "id": "ejemplo-gmail",
+      "accounts": ["gmail-personal", "gmail-dev"],
+      "source_folders": ["INBOX"],
+      "rules": [
+        { "id": "tienda-favorita", "match": { "domain": ["tienda.example.com"] }, "to": "Promociones/TiendaFavorita" },
+        { "id": "banco", "match": { "domain": ["banco.example.com"] }, "to": "Pagos" },
+        { "id": "newsletter-dev", "match": { "domain": ["news.example.dev"] }, "to": "Newsletter/Dev", "create": true },
+        { "id": "seguridad", "match": { "domain": ["accounts.example.com"] }, "to": "Seguridad", "create": true }
+      ]
+    },
+    {
+      "id": "ejemplo-outlook",
+      "accounts": ["outlook"],
+      "source_folders": ["Inbox"],
+      "rules": [
+        { "id": "ol-banco", "match": { "domain": ["banco.example.com"] }, "to": "Inbox/Bancos" },
+        { "id": "ol-servicios", "match": { "domain": ["telefonia.example.com"] }, "to": "Inbox/Servicios/Telefonía" },
+        { "id": "ol-recibos", "match": { "domain": ["extractos.example.com"] }, "to": "Inbox/Extractos" }
+      ]
+    }
+  ]
+}

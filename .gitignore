@@ -1,0 +1,28 @@
+# Credenciales: NUNCA versionar
+secrets/
+*.env
+.env
+apppass_*
+ms_refresh_*.json
+ms_device_code.json
+mail_accounts.json
+mail_rules.json
+mail_purge.json
+
+# Estado y caché
+state/
+*.tmp
+.cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Editores / sistema
+.DS_Store
+.idea/
+.vscode/
+*.swp

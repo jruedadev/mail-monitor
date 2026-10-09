@@ -1,0 +1,42 @@
+{
+  "_readme": "Copia este archivo a $HERMES_HOME/secrets/mail_accounts.json (permisos 600) y rellena tus datos reales. Aquí solo van las cuentas: las contraseñas NUNCA se escriben aquí, solo se apunta a un archivo aparte, a una variable de entorno o a un broker OAuth.",
+  "_security": [
+    "Este archivo no debe versionarse nunca. Vive en $HERMES_HOME/secrets/ (directorio 700).",
+    "La contraseña va en un archivo aparte con permisos 600, o en una variable de entorno."
+  ],
+  "_oauth_note": "Las cuentas personales de Microsoft (outlook.com / hotmail.com / live.com) NO aceptan contraseña en IMAP: el servidor solo anuncia AUTH=XOAUTH2. Se resuelven con 'oauth.token_command'.",
+  "accounts": [
+    {
+      "id": "gmail-personal",
+      "email": "usuario@gmail.com",
+      "display_name": "Personal",
+      "provider": "gmail",
+      "host": "imap.gmail.com",
+      "port": 993,
+      "password_file": "~/.hermes/secrets/apppass_gmail_personal",
+      "folders": ["INBOX"]
+    },
+    {
+      "id": "gmail-dev",
+      "email": "usuario.dev@gmail.com",
+      "display_name": "Dev / profesional",
+      "provider": "gmail",
+      "host": "imap.gmail.com",
+      "port": 993,
+      "password_file": "~/.hermes/secrets/apppass_gmail_dev",
+      "folders": ["INBOX"]
+    },
+    {
+      "id": "outlook",
+      "email": "usuario@outlook.com",
+      "display_name": "Outlook",
+      "provider": "outlook",
+      "host": "outlook.office365.com",
+      "port": 993,
+      "oauth": {
+        "token_command": ["python3", "src/ms_oauth.py", "token"]
+      },
+      "folders": ["Inbox"]
+    }
+  ]
+}
