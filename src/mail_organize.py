@@ -16,16 +16,19 @@ Uso:
     python3 mail_organize.py                          # simulacro (todo)
     python3 mail_organize.py --account outlook       # una cuenta
     python3 mail_organize.py --rule promo-buscalibre  # una sola regla
-    python3 mail_organize.py --apply                  # ejecuta de verdad
+    python3 mail_organize.py --min-age-hours 12       # solo lo de más de 12 h
+    python3 mail_organize.py --apply --quiet          # desatendido: calla si no hay nada
 """
 
 from __future__ import annotations
 
 import argparse
 import base64
+import email.utils
 import json
 import re
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -154,6 +157,59 @@ def uids_for_rule(ctx, rule: dict, sources: list[str], claimed: set[int]) -> lis
     return got
 
 
+def filter_by_age(ctx, uids: list[int], min_age_hours: int) -> list[int]:
+    """Deja solo los mensajes con más de `min_age_hours` de antigüedad.
+
+    Por qué existe: si la organización vacía el INBOX antes de que el vigilante
+    lo escanee, ese correo desaparece de su vista y nunca se avisa de él. Este
+    filtro obliga a lo recién llegado a esperar en el INBOX a ser revisado.
+
+    IMAP SEARCH solo tiene granularidad de DÍA (BEFORE/SINCE), así que la edad
+    exacta se calcula con INTERNALDATE, la fecha que asigna el servidor. Si un
+    mensaje no trae INTERNALDATE legible se conserva: ante la duda, no mover.
+    """
+    if not min_age_hours or not uids:
+        return uids
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=min_age_hours)
+    keep: list[int] = []
+    for i in range(0, len(uids), 400):
+        chunk = uids[i:i + 400]
+        try:
+            typ, fetched = ctx.uid("FETCH", ",".join(str(u) for u in chunk),
+                                   "(UID INTERNALDATE)")
+        except Exception:
+            keep.extend(chunk)              # ante el error, no descartar nada
+            continue
+        if typ != "OK":
+            keep.extend(chunk)
+            continue
+        seen: set[int] = set()
+        for it in fetched:
+            meta = it.decode("utf-8", "replace") if isinstance(it, bytes) else str(it)
+            mu = re.search(r"UID (\d+)", meta)
+            md = re.search(r'INTERNALDATE "([^"]+)"', meta)
+            if not mu:
+                continue
+            uid = int(mu.group(1))
+            seen.add(uid)
+            if not md:
+                keep.append(uid)
+                continue
+            try:
+                dt = email.utils.parsedate_to_datetime(md.group(1))
+                if dt and dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+            except Exception:
+                keep.append(uid)
+                continue
+            if dt and dt < cutoff:
+                keep.append(uid)
+        for u in chunk:                  # los que no vinieron en la respuesta
+            if u not in seen:
+                keep.append(u)
+    return keep
+
+
 def sample_headers(ctx, folder: str, uids: list[int], n: int = 3) -> list[str]:
     if not uids:
         return []
@@ -212,13 +268,18 @@ def main() -> int:
     ap.add_argument("--account", default=None)
     ap.add_argument("--rule", default=None, help="aplica solo esta regla")
     ap.add_argument("--profile", default=None, help="aplica solo este perfil")
+    ap.add_argument("--min-age-hours", type=int, default=0,
+                    help="mueve solo lo que tenga más de N horas (0 = sin filtro)")
     ap.add_argument("--apply", action="store_true",
                     help="EJECUTA los cambios (por defecto solo simula)")
     ap.add_argument("--batch", type=int, default=300)
+    ap.add_argument("--quiet", action="store_true",
+                    help="modo desatendido: no imprime el detalle; solo el resumen "
+                         "final, y nada si no hubo nada que mover")
     args = ap.parse_args()
 
     data = load_rules()
-    if not args.apply:
+    if not args.apply and not args.quiet:
         print("*** SIMULACRO — no se modifica nada. Añade --apply para ejecutar. ***\n")
 
     accounts = ms.load_config()
@@ -230,11 +291,17 @@ def main() -> int:
             raise SystemExit(f"Ninguna cuenta coincide con '{args.account}'.")
 
     grand_total = 0
+    por_cuenta: list[tuple[str, int, dict[str, int]]] = []
+    errores: list[str] = []
+
     for acc in accounts:
-        print(f"\n{'='*74}\n{acc.get('email')}")
+        email = acc.get("email")
+        if not args.quiet:
+            print(f"\n{'='*74}\n{email}")
         prof = profile_for(data, acc)
         if not prof:
-            print("  (sin perfil de reglas para esta cuenta; se omite)")
+            if not args.quiet:
+                print("  (sin perfil de reglas para esta cuenta; se omite)")
             continue
         if args.profile and prof.get("id") != args.profile:
             continue
@@ -243,24 +310,36 @@ def main() -> int:
         if args.rule:
             rules = [r for r in rules if r["id"] == args.rule]
             if not rules:
-                print(f"  (la regla '{args.rule}' no existe en el perfil "
-                      f"'{prof.get('id')}')")
+                if not args.quiet:
+                    print(f"  (la regla '{args.rule}' no existe en el perfil "
+                          f"'{prof.get('id')}')")
                 continue
-        print(f"  perfil: {prof.get('id')} | origen: {', '.join(sources)} | "
-              f"{len(rules)} reglas")
+        if not args.quiet:
+            print(f"  perfil: {prof.get('id')} | origen: {', '.join(sources)} | "
+                  f"{len(rules)} reglas")
+            if args.min_age_hours:
+                print(f"  antigüedad mínima: {args.min_age_hours} h "
+                      f"(lo más nuevo se queda en el origen)")
         try:
             ctx = ms.connect(acc)
         except Exception as e:
-            print(f"  ERROR de conexión: {type(e).__name__}: {e}")
+            errores.append(f"{email}: fallo de conexión ({type(e).__name__})")
+            print(f"  ERROR de conexión: {type(e).__name__}: {e}",
+                  file=sys.stderr)
             continue
         try:
             existing = list_folders(ctx)
             claimed: set[int] = set()
+            movidos_cuenta: dict[str, int] = {}
             for rule in rules:
                 dest = rule["to"]
                 uids = uids_for_rule(ctx, rule, sources, claimed)
                 if not uids:
                     continue
+                if args.min_age_hours:
+                    uids = filter_by_age(ctx, uids, args.min_age_hours)
+                    if not uids:
+                        continue
                 exists = dest in existing
                 flag = "" if exists else (
                     "  [crear]" if rule.get("create") else "  [FALTA y no crea]")
@@ -273,34 +352,66 @@ def main() -> int:
                                 existing.add(dest)
                                 status = "carpeta creada; "
                             except Exception as e:
-                                print(f"  !! {rule['id']}: no pude crear {dest}: {e}")
+                                errores.append(f"{email}: no pude crear {dest} ({e})")
+                                print(f"  !! {rule['id']}: no pude crear {dest}: {e}",
+                                      file=sys.stderr)
                                 continue
                         else:
-                            print(f"  !! {rule['id']}: destino inexistente {dest}; omitido")
+                            # No es un error: esa cuenta simplemente no tiene esa
+                            # carpeta (las dos cuentas de un perfil pueden tener
+                            # estructuras distintas). Se omite en silencio para no
+                            # repetir el mismo aviso en cada ejecución desatendida.
+                            print(f"  !! {rule['id']}: destino inexistente {dest}; omitido",
+                                  file=sys.stderr)
                             continue
                     moved, err = move_uids(ctx, uids, dest, args.batch)
                     status += f"movidos {moved}" + (f" — ERROR: {err}" if err else "")
                     grand_total += moved
-                print(f"\n  [{rule['id']}]{flag}")
-                print(f"    {len(uids):>5} correos -> {dest}")
-                if status:
-                    print(f"    {status}")
-                for line in sample_headers(ctx, sources[0], uids):
-                    print(f"      · {line}")
-            typ, _ = ctx.select(f'"{utf7_encode(sources[0])}"', readonly=True)
-            typ, d = ctx.uid("SEARCH", None, "ALL")
-            total_src = len((d[0] or b"").split())
-            nombre = sources[0]
-            if args.apply:
-                print(f"\n  --- {nombre} restante tras mover: {total_src} mensajes")
-            else:
-                print(f"\n  --- {nombre}: {total_src} mensajes | capturados por reglas: "
-                      f"{len(claimed)} | quedarían sin tocar: {total_src - len(claimed)}")
+                    if moved:
+                        movidos_cuenta[dest] = movidos_cuenta.get(dest, 0) + moved
+                    if err:
+                        errores.append(f"{email}: {err} al mover a {dest}")
+                if not args.quiet:
+                    print(f"\n  [{rule['id']}]{flag}")
+                    print(f"    {len(uids):>5} correos -> {dest}")
+                    if status:
+                        print(f"    {status}")
+                    for line in sample_headers(ctx, sources[0], uids):
+                        print(f"      · {line}")
+            if not args.quiet:
+                typ, _ = ctx.select(f'"{utf7_encode(sources[0])}"', readonly=True)
+                typ, d = ctx.uid("SEARCH", None, "ALL")
+                total_src = len((d[0] or b"").split())
+                nombre = sources[0]
+                if args.apply:
+                    print(f"\n  --- {nombre} restante tras mover: {total_src} mensajes")
+                else:
+                    print(f"\n  --- {nombre}: {total_src} mensajes | capturados por "
+                          f"reglas: {len(claimed)} | quedarían sin tocar: "
+                          f"{total_src - len(claimed)}")
+            por_cuenta.append((email, sum(movidos_cuenta.values()), movidos_cuenta))
         finally:
             try:
                 ctx.logout()
             except Exception:
                 pass
+
+    if args.quiet:
+        # Modo desatendido: silencio total salvo que haya algo que contar.
+        salida: list[str] = []
+        con_movimiento = [(e, n, d) for e, n, d in por_cuenta if n]
+        if con_movimiento:
+            total = sum(n for _, n, _ in con_movimiento)
+            salida.append(f"🗂️ Organizados {total} correo" + ("" if total == 1 else "s"))
+            for email, n, detalle in con_movimiento:
+                destinos = ", ".join(f"{k} ({v})" for k, v in
+                                     sorted(detalle.items(), key=lambda kv: -kv[1])[:6])
+                salida.append(f"- {email}: {n} → {destinos}")
+        if errores:
+            salida.append("⚠️ " + "; ".join(errores[:5]))
+        if salida:
+            print("\n".join(salida))
+        return 0
 
     if args.apply:
         print(f"\nTOTAL movidos: {grand_total}")

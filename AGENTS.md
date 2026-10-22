@@ -21,8 +21,10 @@ es que se ejecuta en cualquier máquina con Python sin preparar nada.
 | `src/mail_scan.py` | Núcleo. Escaneo incremental por UID, clasificación heurística, conexión IMAP (contraseña **u** OAuth2), lectura de un mensaje concreto. Los demás scripts importan de aquí. |
 | `src/mail_inventory.py` | Solo lectura. Dimensiona un buzón: carpetas con conteos, top de remitentes y dominios. |
 | `src/mail_organize.py` | Motor de reglas. Incluye la traducción de nombres a IMAP modified UTF-7 y el reparto de reglas por perfil de cuenta. |
-| `src/mail_purge.py` | Mueve correo a la papelera según un plan. |
+| `src/mail_purge.py` | Mueve correo a la papelera según un plan. Detecta el nombre de la papelera por cuenta (`find_trash()`), porque no se llama igual en Gmail que en Outlook. |
 | `src/ms_oauth.py` | Broker OAuth2 (flujo de código de dispositivo) para cuentas personales de Microsoft. |
+| `src/mail_cycle.sh` | Envoltorio para el planificador: `mail_organize.py --apply --min-age-hours 12 --quiet`. No es un script de Python; solo fija los argumentos y la antigüedad mínima. |
+| `install.sh` | Instalador para una instancia nueva. No instala dependencias (no hay): crea la estructura bajo `$HERMES_HOME`, copia los scripts y deja los ejemplos. Soporta `--dry-run`. |
 
 `mail_scan.py` es el único que no se puede renombrar sin tocar el resto: los
 otros hacen `sys.path.insert(0, Path(__file__).parent)` e `import mail_scan`.

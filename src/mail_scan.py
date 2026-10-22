@@ -298,11 +298,32 @@ def scan_folder(ctx, folder: str, last_uid: int, since_dt, max_n: int,
         typ, fetched = ctx.uid("FETCH", uid_set, items)
         if typ != "OK":
             raise RuntimeError(f"FETCH falló en {folder}")
+        # OJO con el formato de FETCH: Gmail pone "UID nnn" DENTRO de los
+        # metadatos de la tupla, pero Outlook/Exchange lo pone DESPUÉS del
+        # literal del cuerpo, como fragmento suelto ("... UID 107110)"). Si
+        # solo se mira item[0], en Outlook no se encuentra ningún UID y se
+        # descartan todos los mensajes en silencio (0 nuevos con el INBOX
+        # lleno). Se reconstruye el bloque de metadatos concatenando la parte
+        # previa a la tupla con los fragmentos sueltos que la siguen.
+        records: list[tuple[str, bytes]] = []
+        cur_meta = None
+        cur_raw = b""
         for item in fetched:
-            if not isinstance(item, tuple) or len(item) < 2:
-                continue
-            meta, raw = item[0], item[1]
-            meta_s = meta.decode("utf-8", "replace") if isinstance(meta, bytes) else str(meta)
+            if isinstance(item, tuple) and len(item) >= 2:
+                if cur_meta is not None:
+                    records.append((cur_meta, cur_raw))
+                first, body = item[0], item[1]
+                cur_meta = (first.decode("utf-8", "replace")
+                            if isinstance(first, bytes) else str(first))
+                cur_raw = body if isinstance(body, bytes) else str(body).encode()
+            elif isinstance(item, bytes):
+                if cur_meta is None:
+                    continue
+                cur_meta += " " + item.decode("utf-8", "replace")
+        if cur_meta is not None:
+            records.append((cur_meta, cur_raw))
+
+        for meta_s, raw in records:
             m = re.search(r"UID (\d+)", meta_s)
             uid = int(m.group(1)) if m else None
             if uid is None:

@@ -31,7 +31,10 @@ from pathlib import Path
 HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
 SECRETS = HERMES_HOME / "secrets"
 STATE_PATH = SECRETS / "ms_device_code.json"
-TOKEN_PATH = SECRETS / "ms_refresh_outlook.json"
+# Ruta del refresh token. Se puede sobreescribir con HERMES_MS_TOKEN
+# (útil si gestionas varias cuentas de Microsoft en la misma instancia).
+TOKEN_PATH = Path(os.environ.get("HERMES_MS_TOKEN",
+                                 SECRETS / "ms_refresh_outlook.json"))
 
 CLIENT_ID = "9e5f94bc-e8a4-4e73-b8be-63364c29d753"   # Thunderbird, cuentas personales
 TENANT = "consumers"
@@ -75,7 +78,7 @@ def cmd_start() -> int:
     print(f"    {r.get('user_code')}")
     print("=" * 62)
     print(f"  Caduca en {int(r.get('expires_in', 900)) // 60} minutos.")
-    print("  Inicia sesión con usuario@outlook.com y acepta los permisos.")
+    print("  Inicia sesión con tu cuenta de Outlook y acepta los permisos.")
     return 0
 
 

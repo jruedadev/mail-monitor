@@ -1,7 +1,7 @@
 {
   "_readme": "Ejemplo de plan de purga. Copia a $HERMES_HOME/rules/mail_purge.json. La purga NO borra: MUEVE los mensajes a la papelera del proveedor, que el usuario puede auditar y recuperar. El script nunca hace EXPUNGE.",
   "_fields": {
-    "trash_folder": "Nombre EXACTO de la papelera en el servidor. En Gmail con la cuenta en español es '[Gmail]/Papelera'; en inglés, '[Gmail]/Trash'. Verifícalo con mail_inventory.py.",
+    "trash_folder": "Nombre EXACTO de la papelera en el servidor. En Gmail con la cuenta en español es '[Gmail]/Papelera'; en inglés, '[Gmail]/Trash'; en Outlook/Exchange es 'Deleted'. NO hace falta que aciertes: mail_purge.py autodetecta la papelera real de cada cuenta por el atributo \\Trash del servidor y usa este valor solo como pista.",
     "before": "Año límite EXCLUSIVO: before=2024 mueve lo ANTERIOR a 2024 (no incluye 2024). 'before: null' mueve la carpeta entera."
   },
   "_safety": [

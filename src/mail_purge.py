@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,6 +48,38 @@ def count_uids(ctx, folder: str, before: int | None) -> list[int]:
     return [int(u) for u in (d[0] or b"").split()]
 
 
+def find_trash(ctx, configured: str) -> str | None:
+    """Devuelve la papelera real de ESTA cuenta.
+
+    1) Si la configurada existe en la cuenta, se usa tal cual.
+    2) Si no, se busca la carpeta con el atributo \\Trash, que es la papelera
+       nativa del proveedor. Gmail la llama '[Gmail]/Papelera' y Outlook
+       'Deleted', así que un nombre fijo nunca sirve para ambas cuentas.
+    Devuelve None si no se encuentra ninguna.
+    """
+    typ, data = ctx.list()
+    if typ != "OK":
+        return configured
+    names = []
+    attr_trash = None
+    for line in data or []:
+        s = line.decode("utf-8", "replace") if isinstance(line, bytes) else str(line)
+        m = re.match(r'\((?P<flags>[^)]*)\)\s+"(?P<delim>[^"]*)"\s+(?P<name>.+)$', s)
+        if not m:
+            continue
+        raw_name = m.group("name").strip()
+        if raw_name.startswith('"') and raw_name.endswith('"'):
+            raw_name = raw_name[1:-1]
+        name = mo.utf7_decode(raw_name)
+        names.append(name)
+        flags = m.group("flags").replace("\\\\", "\\")
+        if "\\Trash" in flags and attr_trash is None:
+            attr_trash = name
+    if configured in names:
+        return configured
+    return attr_trash
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Mueve correo a la Papelera según plan.")
     ap.add_argument("--plan", required=True, help="id del plan en mail_purge.json")
@@ -66,7 +99,8 @@ def main() -> int:
 
     print(f"Plan: {args.plan}")
     print(f"Motivo: {plan.get('why', '—')}")
-    print(f"Destino: {trash}  (NO es borrado definitivo)")
+    print(f"Destino: Papelera de cada cuenta (configurado: '{trash}'; se "
+          f"auto-detecta por cuenta). NO es borrado definitivo.")
     if not args.apply:
         print("\n*** SIMULACRO — no se mueve nada. Añade --apply para ejecutar. ***\n")
 
@@ -88,11 +122,14 @@ def main() -> int:
             continue
         try:
             existing = mo.list_folders(ctx)
-            if trash not in existing:
-                print(f"  !! La Papelera '{trash}' no existe con ese nombre. Carpetas "
-                      f"que contienen 'Papelera' o 'Trash': "
-                      f"{[f for f in existing if 'papelera' in f.lower() or 'trash' in f.lower()]}")
+            acc_trash = find_trash(ctx, trash)
+            if not acc_trash:
+                print(f"  !! No se encontró ninguna Papelera en esta cuenta "
+                      f"(configurada: '{trash}'). Se omite.")
                 continue
+            if acc_trash != trash:
+                print(f"  (Papelera de esta cuenta: '{acc_trash}' — "
+                      f"la configurada '{trash}' no existe aquí)")
             for item in plan["folders"]:
                 path = item["path"]
                 before = item.get("before")
@@ -111,13 +148,13 @@ def main() -> int:
                     uids = uids[:args.limit]
                 etiqueta = f"anterior a {before}" if before else "toda la carpeta"
                 print(f"\n  [{path}]  ({etiqueta})")
-                print(f"    {len(uids):>5} correos -> {trash}")
+                print(f"    {len(uids):>5} correos -> {acc_trash}")
                 if not uids:
                     continue
                 for line in mo.sample_headers(ctx, path, uids, 3):
                     print(f"      · {line}")
                 if args.apply:
-                    moved, err = mo.move_uids(ctx, uids, trash, args.batch)
+                    moved, err = mo.move_uids(ctx, uids, acc_trash, args.batch)
                     print(f"    movidos {moved}" + (f" — ERROR: {err}" if err else ""))
                     grand += moved
         finally:

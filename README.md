@@ -11,8 +11,9 @@ Escrito en Python usando solo la biblioteca estándar (`imaplib` + `ssl`). No ne
 | `mail_scan.py` | Escaneo **incremental**: recuerda el último UID leído por carpeta y devuelve solo lo nuevo, en JSON. Clasifica el ruido evidente (boletines, promociones) y marca la señal alta (dinero, seguridad, trabajo). |
 | `mail_inventory.py` | Inventario: carpetas con su número de mensajes, y los remitentes/dominios más frecuentes de un buzón. Sirve para dimensionar la acumulación **antes** de diseñar reglas. |
 | `mail_organize.py` | Aplica reglas de agrupación: mueve correo del INBOX a las carpetas que definas. **Simula por defecto.** |
-| `mail_purge.py` | Mueve correo a la papelera según un plan. **Simula por defecto** y **nunca borra de forma definitiva**. |
+| `mail_purge.py` | Mueve correo a la papelera según un plan. **Simula por defecto** y **nunca borra de forma definitiva**. Detecta sola el nombre de la papelera de cada cuenta. |
 | `ms_oauth.py` | Broker OAuth2 para cuentas personales de Microsoft, obligado porque Outlook deshabilitó la contraseña en IMAP. |
+| `mail_cycle.sh` | Envoltorio para el planificador: organiza todas las cuentas dejando en el INBOX lo que aún es demasiado reciente para haber sido avisado. |
 
 ## Requisitos
 
@@ -23,9 +24,27 @@ Nada más. Sin `pip install`, sin compilación.
 
 ## Instalación
 
+### Opción A — instalador automático (recomendado)
+
 ```bash
 git clone https://github.com/jruedadev/mail-monitor.git
 cd mail-monitor
+./install.sh --prefix ~/.hermes
+```
+
+El instalador comprueba que tu Python sirve, crea la estructura de directorios,
+copia los scripts a `$HERMES_HOME/scripts/`, deja los archivos de configuración
+de ejemplo con los permisos correctos (nunca sobreescribe los que ya existan) y
+te dice los siguientes pasos. Acepta `--dry-run` para ver qué haría sin tocar
+nada y `--with-cron` para imprimir además las líneas de planificador.
+
+### Opción B — manual
+
+```bash
+git clone https://github.com/jruedadev/mail-monitor.git
+cd mail-monitor
+mkdir -p ~/.hermes/secrets ~/.hermes/rules ~/.hermes/state
+cp src/*.py src/mail_cycle.sh ~/.hermes/scripts/
 ```
 
 ## Configuración
@@ -120,14 +139,31 @@ python3 src/mail_purge.py --plan ejemplo-publicidad --apply
 `mail_scan.py` está pensado para ejecutarse desde un planificador y pasar su JSON a un agente o script que decida qué avisar. Un cron cada pocas horas:
 
 ```cron
-0 8,13,19 * * * cd /ruta/mail-monitor && HERMES_HOME=$HOME/.hermes python3 src/mail_scan.py
+0 8,13,19 * * * HERMES_HOME=$HOME/.hermes python3 $HOME/.hermes/scripts/mail_scan.py
 ```
+
+### 6. Mantener las carpetas organizadas sin romper el vigilante
+
+Si organizas el buzón *antes* de que el vigilante lo haya visto, el correo
+desaparece del INBOX sin haberte avisado. `mail_cycle.sh` resuelve esto con una
+antigüedad mínima: solo mueve lo que ya tuvo oportunidad de ser revisado.
+
+```cron
+0 9,14,20 * * * HERMES_HOME=$HOME/.hermes MIN_AGE_HOURS=12 $HOME/.hermes/scripts/mail_cycle.sh
+```
+
+Equivale a `mail_organize.py --apply --min-age-hours 12 --quiet`. Con `--quiet`
+un stdout vacío significa "no había nada que mover", así que el planificador no
+envía aviso si no hubo cambios. El margen de 12 h es algo más que el hueco entre
+revisiones (8:00 → 19:00), de forma que todo correo nuevo pasa por el vigilante
+al menos una vez antes de cambiar de carpeta.
 
 ## Decisiones de diseño (por qué es seguro)
 
 - **Simulacro por defecto.** `mail_organize.py` y `mail_purge.py` no modifican nada sin `--apply`.
 - **La purga mueve, no borra.** El destino es la papelera del proveedor, que el usuario puede auditar y recuperar. El código nunca hace `EXPUNGE` destructivo.
 - **Los destinos inexistentes se omiten.** Una regla cuyo destino no exista no crea nada salvo que lleve `create: true` explícito.
+- **La papelera se autodetecta.** `mail_purge.py` pregunta al servidor cuál de sus carpetas tiene el atributo `\Trash`, en vez de asumir el nombre. Así el mismo plan funciona en Gmail (`[Gmail]/Papelera`) y en Outlook (`Deleted`) sin tocarlo.
 - **Los UIDs son únicos por carpeta, no por buzón.** Cualquier lógica que procese varias carpetas en una pasada debe tenerlo en cuenta; deduplicar entre carpetas distintas descarta mensajes legítimos.
 - **Nombres de carpeta en IMAP modified UTF-7.** El servidor devuelve `Cr&AOk-ditos` para `Créditos`. Las reglas se escriben legibles y el motor traduce en ambos sentidos.
 - **Verificar contra el servidor, no contra el script.** Después de cada `--apply`, comparar los conteos reales con los previstos. Un simulacro que no cuadra con el inventario es un bug del simulacro.
@@ -140,15 +176,27 @@ mail-monitor/
 │   ├── mail_scan.py        # escaneo incremental + clasificación + broker OAuth
 │   ├── mail_inventory.py   # inventario de carpetas y remitentes
 │   ├── mail_organize.py    # motor de reglas (UTF-7, perfiles por cuenta)
-│   ├── mail_purge.py       # purga a la papelera
+│   ├── mail_purge.py       # purga a la papelera (autodetecta la papelera)
+│   ├── mail_cycle.sh       # envoltorio para el planificador (antigüedad mínima)
 │   └── ms_oauth.py         # OAuth2 para Microsoft personal
 ├── config/
 │   ├── mail_accounts.example.json
 │   ├── mail_rules.example.json
 │   └── mail_purge.example.json
-├── AGENTS.md               # contexto del proyecto para agentes de código
+├── install.sh              # instalador para una instancia nueva
+├── README.md               # esta guía
+├── AGENTS.md               # contexto para agentes de código
+├── CLAUDE.md               # guía para Claude Code
 └── LICENSE
 ```
+
+## Documentación
+
+| Archivo | Para quién |
+|---|---|
+| [README.md](README.md) | Uso general: instalación, configuración, comandos. |
+| [AGENTS.md](AGENTS.md) | Agentes de código: responsabilidades de cada archivo e invariantes. |
+| [CLAUDE.md](CLAUDE.md) | Claude Code: trampas conocidas y comandos frecuentes. |
 
 ## Licencia
 
